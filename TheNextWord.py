@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[30]:
 
 from __future__ import absolute_import
 from __future__ import division
@@ -23,23 +23,24 @@ logging = tf.logging
 #Configurations
 
 init_scale = 0.1
-learning_rate = 0.8
+learning_rate = 0.85
 max_grad_norm = 5
-num_layers = 2
-num_steps = 5 #windows size
+num_layers = 4
+num_steps = 3 #windows size
 hidden_size = 200
 max_epoch = 4
-max_max_epoch = 3
-keep_prob = 0.8
+max_max_epoch = 10
+keep_prob = 0.9
 lr_decay = 0.5
 batch_size = 1
-vocab_size = 13500
+vocab_size = 12000
 
 #output of prediction and logging
 output_file = open("predictions.txt", "w")
 output_log = open("output_log.txt","w")
 
-# In[2]:
+
+# In[31]:
 
 class PTBModel(object):
     """The PTB model."""
@@ -60,7 +61,7 @@ class PTBModel(object):
 
         self._initial_state = cell.zero_state(batch_size, tf.float32)
 
-        with tf.device("/cpu:0"):
+        with tf.device("/gpu:0"):
             embedding = tf.get_variable("embedding", [vocab_size, size])
             inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
@@ -143,7 +144,7 @@ class PTBModel(object):
         return self._train_op
 
 
-# In[3]:
+# In[32]:
 
 def run_epoch(session, m, data, eval_op, verbose=True,test=False):
     """Runs the model on the given data."""
@@ -155,22 +156,54 @@ def run_epoch(session, m, data, eval_op, verbose=True,test=False):
     state = m.initial_state.eval()
     correct_predictions = 0
     total_predictions = 0
+    correct_predictions_4 = 0
+    eos_ind = words.index("<eos>")
     for step, (x, y) in enumerate(reader.ptb_iterator(data,batch_size, num_steps)):
+        if eos_ind in x[0]:
+            continue
+        if eos_ind in y[0]:
+            continue
         cost, state,probs, logits, _ = session.run([m.cost, m.final_state, m.probabilities, m.logits, eval_op],
                                  {m.input_data: x,
                                   m.targets: y,
                                   m.initial_state: state})
         costs += cost
         iters += num_steps
-	output_log.write("%s\n"%x[0])
-        if test:
+        
+        
+        #chosen_word = np.argmax(probs, 1)
+        chosen_word = probs.argsort()[-4:][::-1]
+        #print("Chosen word")
+        #print(len(chosen_word[-1]))
+        #print(chosen_word)
+        #print(chosen_word[-1])
+        
+        out_lg = '[ '
+        for i in x[0]:
+            out_lg = out_lg + ' ' + words[i]
+        out_lg = out_lg + ' ] [ '
+        
+        flag_in_range = True
+        for i in range(4):
+            if chosen_word[-1][i] > vocab:
+                print("There's a problem here %d"%chosen_word[-1][i])
+                flag_in_range = False
+        if flag_in_range:
+            out_lg = out_lg + words[chosen_word[-1][0]] + ' , '
+            out_lg = out_lg + words[chosen_word[-1][1]] + ' , '
+            out_lg = out_lg + words[chosen_word[-1][2]] + ' , '
+            out_lg = out_lg + words[chosen_word[-1][3]] + ' ] '
+        
+        #out_lg = out_lg + str(probs[chosen_word[-1][0]]) + ' , '
+        #out_lg = out_lg + str(probs[chosen_word[-1][1]]) + ' , '
+        #out_lg = out_lg + str(probs[chosen_word[-1][2]]) + ' ]'
+        
+        output_log.write("%s %.3f\n"%(out_lg, cost))
+        if test and flag_in_range:
             Fragmented_sentence = False
-            for i in range(len(x[0])):
-                if words[x[0][i]] == '<eos>':
-                    Fragmented_sentence = True
             if not Fragmented_sentence:
                 total_predictions += 1
-                chosen_word = np.argmax(probs, 1)
+                
                 print(step)
                 inp = ''
                 for w in x[0]:
@@ -185,12 +218,13 @@ def run_epoch(session, m, data, eval_op, verbose=True,test=False):
                 out = ''
                 for w in y[0]:
                     out = out + ' ' + words[w]
-                out = out + ' ' + words[chosen_word[-1]]
+                out = out + ' ' + words[chosen_word[-1][0]]
                 output_file.write(out + "\n")
-                if y[0][-1] == chosen_word[-1]:
+                if y[0][-1] == chosen_word[-1][0]:
                     correct_predictions += 1
-                
-                print("Prediction: %s: \n" % words[chosen_word[- 1]])
+                if y[0][-1] in chosen_word[-1][0:4]:
+                    correct_predictions_4 += 1
+                print("Prediction: %s: \n" % words[chosen_word[- 1][0]])
             
             
         if verbose and step % (epoch_size // 10) == 10:
@@ -203,11 +237,13 @@ def run_epoch(session, m, data, eval_op, verbose=True,test=False):
             print("Batch size: %s, Num steps: %s" % (batch_size, num_steps))
     if test:
         perc = (correct_predictions + 0.0) / (0.0 + total_predictions)
+        perc4 = (correct_predictions_4 + 0.0) / (0.0 + total_predictions)
         print("Total prediction: %d, Correct prediction: %d, percentage: %.3f"%(total_predictions, correct_predictions, perc))
+        print("Top4: Total prediction: %d, Correct prediction: %d, percentage: %.3f"%(total_predictions, correct_predictions_4, perc_4))
     return np.exp(costs / iters)
 
 
-# In[4]:
+# In[33]:
 
 def _read_words(filename):
     with tf.gfile.GFile(filename, "r") as f:
@@ -230,19 +266,18 @@ train_data, valid_data, test_data, vocab = raw_data
 print(vocab)
 
 
-
-# In[5]:
-
 for i in range(25):
-    print("The %d th word in the dictionary is: %s" % (i, words[test_data[i]]))
+    print("[ %d , %d ,  %s ]" % (i,test_data[i], words[test_data[i]]))
 
-
-# In[6]:
-
-len(test_data)
+print(len(test_data))
 
 
 # In[ ]:
+
+
+
+
+# In[34]:
 
 with tf.Graph().as_default(), tf.Session(config=tf.ConfigProto(log_device_placement=True)) as session:
     initializer = tf.random_uniform_initializer(-init_scale, init_scale)
@@ -253,7 +288,7 @@ with tf.Graph().as_default(), tf.Session(config=tf.ConfigProto(log_device_placem
         mtest = PTBModel(is_training=False)
 
     tf.initialize_all_variables().run()
-
+    writer = tf.train.SummaryWriter("output_graph", session.graph)
     for i in range(max_max_epoch):
         lr_decay = lr_decay ** max(i - max_epoch, 0.0)
         m.assign_lr(session, learning_rate * lr_decay)
@@ -273,35 +308,14 @@ with tf.Graph().as_default(), tf.Session(config=tf.ConfigProto(log_device_placem
     output_file.close()
 
 
-# Comment
-# 
+# In[13]:
 
-# In[ ]:
-
-### 
-#tf.train.import_meta_graph('word_predict.ckpt-1.meta')
-#tf.import_graph_def()
-#with tf.Session() as session:
-#    saver = tf.train.Saver()
-#    ckpt = tf.train.get_checkpoint_state(checkpoint_dir='/Users/sfadaee/Documents/')
-#    if ckpt and ckpt.model_checkpoint_path:
-#        saver.restore(session, ckpt.model_checkpoint_path, global_step = 1)
-#        test_perplexity = run_epoch(session, mtest, test_data, tf.no_op(), test = True)
-
-#    else:
-#        print("no checkpoint found")
+a = np.array([2,2,7,4,5,6])
 
 
-# In[ ]:
+# In[29]:
 
-#with tf.variable_scope("model",reuse=True):
-#    mtest = PTBModel(is_training=False)
-#m.assign_lr(session, learning_rate * lr_decay)
-
-
-# In[ ]:
-
-
+len(words)
 
 
 # In[ ]:
