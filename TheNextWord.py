@@ -308,17 +308,5 @@ with tf.Graph().as_default(), tf.Session(config=tf.ConfigProto(log_device_placem
     output_file.close()
 
 
-# In[13]:
-
-a = np.array([2,2,7,4,5,6])
-
-
-# In[29]:
-
-len(words)
-
-
-# In[ ]:
-
 
 
